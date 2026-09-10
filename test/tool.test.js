@@ -30,3 +30,10 @@ test('collectStatus rejection yields error JSON, never rejects', async () => {
   assert.equal(out.shape, null)
   assert.match(out.error, /boom/)
 })
+
+test('extra collectStatus fields (update snapshot) pass through', async () => {
+  const tool = createStatusTool({ collectStatus: async () => ({ ...FAKE, update: { running: true, log: [{ at: 1, target: '/x', step: 'pull', status: 'ok' }] } }) })
+  const out = JSON.parse(await tool.execute({}, {}))
+  assert.equal(out.update.running, true)
+  assert.equal(out.update.log[0].step, 'pull')
+})
