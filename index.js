@@ -1,11 +1,15 @@
 import { realpathSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { collectStatus } from './lib/status.js'
 import { createStatusTool } from './lib/tool.js'
+import { createRunTool } from './lib/run-tool.js'
+import { createUpdateState } from './lib/update-state.js'
+import { runUpdatePipeline } from './lib/update-run.js'
 
 export const name = 'dsh-updater'
-// 工具注册要等 tools 服务就绪(与 harness 全部插件一致的要求)
-export const inject = ['tools']
+// 工具注册要等 tools 服务;jobs.start 要等 jobs 服务
+export const inject = ['tools', 'jobs']
 
 const DEFAULTS = {
   checkOnStart: true,
@@ -22,11 +26,21 @@ function dshBinPath() {
   try { return realpathSync(process.argv[1]) } catch { return fileURLToPath(import.meta.url) }
 }
 
+function expandHome(p) {
+  if (!p) return p
+  return p.startsWith('~') ? join(process.env.HOME ?? '', p.slice(1)) : p
+}
+
 export function apply(ctx, config) {
   const cfg = { ...DEFAULTS, ...config }
   const binPath = dshBinPath()
+  const updateState = createUpdateState()
   ctx.logger?.info?.('dsh-updater loaded, checkOnStart=%s', cfg.checkOnStart)
-  const runStatus = () => collectStatus({ config: cfg, env: { binPath }, fetch: true })
+
+  const collect = (opts = {}) => collectStatus({ ...opts, config: cfg, env: { binPath } })
+  const collectWithUpdate = async (opts = {}) => ({ ...await collect(opts), update: updateState.snapshot() })
+
+  const runStatus = () => collect()
     .then(({ shape, checks }) => {
       const problems = checks.filter(c => c.status === 'behind' || c.status === 'diverged' || c.status === 'error')
       if (problems.length) ctx.logger?.info?.('dsh-updater: %d update-relevant results (shape=%s)', problems.length, shape.kind)
@@ -42,7 +56,44 @@ export function apply(ctx, config) {
   // timer 是 cordis 不管理的资源,按教程用 ctx.effect 包一层,卸载时执行 disposer
   ctx.effect(() => () => clearInterval(timer))
 
-  ctx.tools.register(createStatusTool({
-    collectStatus: (opts = {}) => collectStatus({ ...opts, config: cfg, env: { binPath } }),
+  ctx.tools.register(createStatusTool({ collectStatus: collectWithUpdate }))
+  ctx.tools.register(createRunTool({
+    collectStatus: collect,
+    startUpdate: (plan, exec) => {
+      if (!updateState.begin()) throw new Error('an update is already running')
+      const harnessPath = plan.find(t => t.target === 'harness')?.path ?? null
+      let jobId
+      try {
+        jobId = ctx.jobs.start({
+          kind: 'dsh-update',
+          label: `dsh-updater: update ${plan.length} target(s)`,
+          owner: exec?.agent,
+          run() {
+            const done = runUpdatePipeline({
+              updateState,
+              harnessPath,
+              integrationsRoot: expandHome(cfg.integrationsDir),
+              gitBin: 'git',
+              pnpmBin: 'pnpm',
+            }).then(summary => ({
+              status: summary.cancelled ? 'killed' : summary.ok ? 'completed' : 'failed',
+              detail: summary.cancelled ? 'cancelled' : summary.ok ? 'update finished' : 'update finished with failures; run dsh_update_status for steps',
+              output: JSON.stringify(summary, null, 2),
+            }), (e) => ({
+              status: 'failed',
+              detail: String(e?.message ?? e),
+            }))
+            return {
+              cancel: () => updateState.abort('cancelled by user'),
+              done,
+            }
+          },
+        })
+      } catch (e) {
+        updateState.finish({ ok: false, cancelled: false, harness: null, integrations: [] })
+        throw e
+      }
+      return { jobId }
+    },
   }))
 }

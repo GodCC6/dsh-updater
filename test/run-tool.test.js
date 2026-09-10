@@ -62,3 +62,13 @@ test('startUpdate throw → started:false with reason', async () => {
   assert.equal(out.started, false)
   assert.match(out.reason, /already running/)
 })
+
+test('exec is forwarded to startUpdate', async () => {
+  const seen = []
+  const tool = createRunTool({
+    collectStatus: fakeCollect({}),
+    startUpdate: async (_plan, exec) => { seen.push(exec); return { jobId: 'x' } },
+  })
+  await tool.execute({}, { agent: 'agent-7' })
+  assert.deepEqual(seen[0], { agent: 'agent-7' })
+})
