@@ -1,7 +1,7 @@
 # dsh-updater 插件设计(npm + git 双形态自动更新)
 
 日期:2026-09-09
-状态:设计已与用户对齐;实现按 M1 计划推进(`docs/superpowers/plans/2026-09-09-dsh-updater-m1.md`)
+状态:设计已与用户对齐;2026-09-10 修订(安装失败也纳入回滚触发;integrationsGlob → integrationsDir;M1 措辞改「无变更动作」);实现按 M1 计划推进(`docs/superpowers/plans/2026-09-09-dsh-updater-m1.md`)
 落点:独立仓 `~/Projects/dsh-updater`(方案 B),以 `dsh plugin --profile web add github:<owner>/dsh-updater` 方式安装;本 spec 已随仓迁入 `docs/superpowers/specs/`(原起草于 vps-infra,2026-09-09 迁入)。
 
 ## 1. 背景与目标
@@ -35,7 +35,7 @@ npm 形态的替换沿用社区已验证的生命周期:运行期只下载暂存
 
 - **默认(确认门)**:启动时检查一次 + 每 30 分钟复查,只在会话/面板提示"有新版";用户在会话里说更新、调 `dsh_update_run`、或面板点按钮,才执行。检查与更新永远分离。
 - **自动模式**:显式 opt-in(配置项 `autoApply: false` 默认关)。开启后发现新版先 stage,等 **idle 条件**(无运行中 background job 且会话日志静默 ≥ 2 分钟)才应用。
-- **git 形态回滚**:`pull` 仅 `--ff-only`,本地有分叉(diverged)直接报错不自动 merge/rebase;`pnpm build` 失败 → `git reset --hard ORIG_HEAD` 回原 commit 并报告。
+- **git 形态回滚**:`pull` 仅 `--ff-only`,本地有分叉(diverged)直接报错不自动 merge/rebase;`pnpm install --frozen-lockfile` 或 `pnpm build` 任一失败 → `git reset --hard ORIG_HEAD` 回原 commit 并报告。
 - **npm 形态回滚**:替换前保留旧版安装目录副本,替换失败自动还原。
 - **面板 API 只答 loopback**(`127.0.0.1`/`localhost`/`::1`),不进反代/隧道。特权操作为零(无 sudo)——npm 形态的 `npm install -g` 只写用户 prefix;若用户 prefix 需要提权,报告并让用户手动执行,不代做。
 
@@ -73,12 +73,12 @@ npm 形态的替换沿用社区已验证的生命周期:运行期只下载暂存
         autoApply: false            # 自动应用,默认关(确认门)
         idleQuietMs: 120000         # 会话静默阈值
         npmDistTag: latest
-        integrationsGlob: '~/.dsh/integrations/*'
+        integrationsDir: '~/.dsh/integrations'  # 枚举其一级子目录,非 glob
 ```
 
 ## 8. 里程碑
 
-1. **M1 检查与状态**:形态探测 + 本体/integrations 比对 + `dsh_update_status`。先交付,纯只读零风险。
+1. **M1 检查与状态**:形态探测 + 本体/integrations 比对 + `dsh_update_status`。先交付,无变更动作(仅 fetch 与 registry 查询)。
 2. **M2 git 形态更新**:确认后 pull + build + 回滚 + `dsh_update_run`。
 3. **M3 npm 形态更新**:stage + 退出后应用 + 回滚。
 4. **M4 面板与自动模式**:Web 屏、idle 感知自动应用、`dsh_update_cancel`。

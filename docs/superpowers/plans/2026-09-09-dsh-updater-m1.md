@@ -6,9 +6,9 @@
 
 **Architecture:** 纯 ESM JavaScript cordis 插件,以 `dsh.bundle` 包格式安装进 web profile。纯逻辑模块(探测/比对/聚合)与 I/O(git/npm 子进程)分离,全部可注入路径做单测。工具经 `ctx.tools.register()` 裸 JSON-Schema 注册。
 
-**Tech Stack:** Node >= 20 ESM、`node:test`(零测试依赖)、`execFile` 调 git/npm、`@deepseek-ai/schemastery`(仅 config schema,随 harness 运行时提供,不打包)。
+**Tech Stack:** Node >= 20 ESM、`node:test`(零测试依赖)、`execFile` 调 git/npm;无第三方运行时依赖(config 走 patch 行 + 代码兜底,不引 schemastery,理由见 Global Constraints)。
 
-**Spec:** `/Users/dmall/Projects/vps-infra/docs/superpowers/specs/2026-09-09-dsh-updater-plugin-design.md`
+**Spec:** `/Users/dmall/Projects/dsh-updater/docs/superpowers/specs/2026-09-09-dsh-updater-plugin-design.md`(已随 spec 迁入本仓;原 vps-infra 路径已失效)
 
 ## Global Constraints
 
@@ -18,7 +18,7 @@
 - 所有外部命令用 `execFile`(数组参数),禁止 shell 拼接。
 - 版本比较必须支持 prerelease(`0.1.5-alpha.1` < `0.1.5`)。
 - 插件对路径只操作「探测得出」的目标,工具入参不接收自由路径(spec §9)。
-- config 字段一律走 Schemastery schema 带默认值,不硬编码可调值(spec §7)。
+- config 默认值经 `cordis.patch.yml` 的 insert 行下发(spec §7 原文即此形态),`index.js` 对各字段再做代码级兜底默认;**不 import schemastery**(`@deepseek-ai/schemastery` 是 harness 内 vendor 的 `link:` 包,对独立 link 安装仓不可靠解析;schema 迁移推迟到出现真实需要)。
 - 测试命令统一:`node --test --test-reporter=spec "$R/test/"`。
 
 ---
@@ -82,10 +82,10 @@ export function apply(ctx, config) {
         autoApply: false
         idleQuietMs: 120000
         npmDistTag: latest
-        integrationsGlob: '~/.dsh/integrations/*'
+        integrationsDir: '~/.dsh/integrations'
 ```
 
-(M1 先让 config 从 patch 行注入;下个任务给入口补 Schemastery schema 后,这些默认值迁入 schema。)
+(配置默认值常驻 patch 行——这正是 spec §7 的原文形态,patch 是定义该行 config 的唯一层;不迁入 schemastery,理由见 Global Constraints。)
 
 - [ ] **Step 3: 写冒烟测试**
 
@@ -242,7 +242,7 @@ git -C /Users/dmall/Projects/dsh-updater commit -m "feat: prerelease-aware semve
 
 **Interfaces:**
 - Consumes: node:`fs`/`node:path`。
-- Produces: `detectInstallShape({ harnessRoot?: string, binPath?: string }): { kind: 'git'|'npm'|'unknown', harnessRoot: string, details: object }`。判定规则(spec §2):`harnessRoot` 下有 `.git` 目录 **且** 有 `pnpm-workspace.yaml` → `git`;`binPath` realpath 在 npm prefix 下且最近 `package.json` 的 `name === '@deepseek-ai/dsh'` → `npm`;否则 `unknown`。
+- Produces: `detectInstallShape({ harnessRoot?: string, binPath?: string }): { kind: 'git'|'npm'|'unknown', harnessRoot: string, details: object }`。判定规则(spec §2):显式 `harnessRoot` 有 `.git` **且** `pnpm-workspace.yaml` → `git`;否则从 `dirname(realpath(binPath))` 逐级向上,**任一层先满足 `.git` + `pnpm-workspace.yaml` → `git`**(git 标记优先——源码 checkout 形态下 `apps/cli/package.json` 同名 `@deepseek-ai/dsh`,但它在仓内,不得先判 npm);全程无 git 标记且某层 `package.json` 的 `name === '@deepseek-ai/dsh'` → `npm`(`harnessRoot` 即该包目录);都不中 → `unknown`。bin 路径来源见 Task 8:必须用运行中 dsh 的 `process.argv[1]`,不能用插件自身 `import.meta.url`(`link:` 安装下后者落在本插件仓,永远走不到 harness)。
 
 - [ ] **Step 1: 写失败测试(临时 fixture 目录)**
 
@@ -287,6 +287,17 @@ test('npm shape via package name walk-up', () => {
   assert.equal(s.details.packageName, '@deepseek-ai/dsh')
 })
 
+test('git shape wins when the dsh package sits inside a source checkout', () => {
+  const root = fixture({
+    '.git/HEAD': 'ref: refs/heads/main',
+    'pnpm-workspace.yaml': 'packages: []\n',
+    'apps/cli/package.json': JSON.stringify({ name: '@deepseek-ai/dsh' }),
+  })
+  const s = detectInstallShape({ binPath: join(root, 'apps/cli/bin/dsh.js') })
+  assert.equal(s.kind, 'git')
+  assert.equal(s.harnessRoot, root)
+})
+
 test('no evidence at all → unknown, never throws', () => {
   const s = detectInstallShape({})
   assert.equal(s.kind, 'unknown')
@@ -304,13 +315,16 @@ Expected: FAIL(模块不存在)
 import { existsSync, realpathSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 
-function walkUpPackage(startDir) {
+const isGitCheckout = (dir) =>
+  existsSync(join(dir, '.git')) && existsSync(join(dir, 'pnpm-workspace.yaml'))
+
+function nearestDshPackage(startDir) {
   let dir = startDir
   while (true) {
-    const pj = join(dir, 'package.json')
-    if (existsSync(pj)) {
-      try { return { dir, pkg: JSON.parse(readFileSync(pj, 'utf8')) } } catch { /* fall through */ }
-    }
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+      if (pkg?.name === '@deepseek-ai/dsh') return dir
+    } catch { /* 无 package.json 或解析失败:继续向上 */ }
     const parent = dirname(dir)
     if (parent === dir) return null
     dir = parent
@@ -320,17 +334,18 @@ function walkUpPackage(startDir) {
 export function detectInstallShape({ harnessRoot, binPath } = {}) {
   if (harnessRoot) {
     const root = resolve(harnessRoot)
-    if (existsSync(join(root, '.git')) && existsSync(join(root, 'pnpm-workspace.yaml'))) {
-      return { kind: 'git', harnessRoot: root, details: {} }
-    }
+    if (isGitCheckout(root)) return { kind: 'git', harnessRoot: root, details: {} }
   }
   if (binPath) {
-    let real = binPath
-    try { real = realpathSync(binPath) } catch { /* keep as-is */ }
-    const found = walkUpPackage(dirname(real))
-    if (found && found.pkg?.name === '@deepseek-ai/dsh') {
-      return { kind: 'npm', harnessRoot: found.dir, details: { packageName: found.pkg.name } }
+    let start = dirname(binPath)
+    try { start = dirname(realpathSync(binPath)) } catch { /* 解析不了就用原路径 */ }
+    // 先自内向外找 git 标记(优先级最高:源码 checkout 里 apps/cli 也有同名包,但仓库根在其上方)
+    for (let dir = start; ; dir = dirname(dir)) {
+      if (isGitCheckout(dir)) return { kind: 'git', harnessRoot: dir, details: {} }
+      if (dir === dirname(dir)) break
     }
+    const pkgDir = nearestDshPackage(start)
+    if (pkgDir) return { kind: 'npm', harnessRoot: pkgDir, details: { packageName: '@deepseek-ai/dsh' } }
   }
   return { kind: 'unknown', harnessRoot: harnessRoot ? resolve(harnessRoot) : null, details: {} }
 }
@@ -339,7 +354,7 @@ export function detectInstallShape({ harnessRoot, binPath } = {}) {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node --test /Users/dmall/Projects/dsh-updater/test/detect.test.js`
-Expected: 4 个 PASS
+Expected: 5 个 PASS
 
 - [ ] **Step 5: 提交**
 
@@ -364,11 +379,11 @@ git -C /Users/dmall/Projects/dsh-updater commit -m "feat: install-shape detectio
 // CheckResult(所有模块共用的形状,放 lib/types.js 或 JSDoc typedef)
 {
   target: string,        // 仓路径或本体标识
-  kind: 'harness-git' | 'integration',
+  kind: 'harness-git' | 'harness-npm' | 'integration',   // harness-npm 由 Task 5 引入
   status: 'up-to-date' | 'behind' | 'diverged' | 'no-upstream' | 'error',
-  behindCount: number,   // status='behind' 时 >0,其余 0
-  localRef: string,      // HEAD sha 短值,取不到为 null
-  remoteRef: string,     // upstream sha 短值,取不到为 null
+  behindCount: number,   // status='behind' 或 'diverged' 时 >0,其余 0;npm 形态远端更新时固定 1
+  localRef: string,      // HEAD sha 短值 / 当前版本,取不到为 null
+  remoteRef: string,     // upstream sha 短值 / 远端版本,取不到为 null
   error?: string,
 }
 ```
@@ -382,7 +397,7 @@ git -C /Users/dmall/Projects/dsh-updater commit -m "feat: install-shape detectio
 ```js
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, cpSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -422,14 +437,15 @@ test('up-to-date when work matches origin', async () => {
 
 test('behind when origin advances', async () => {
   const { origin, work } = cloneWithDivergence0()
-  const r = await checkGitRepo({ path: work, fetch: false })
+  // origin 是本地路径,fetch 不走网络;必须 fetch 才能让 work 看到 origin 的新提交
+  const r = await checkGitRepo({ path: work, fetch: true })
   assert.equal(r.status, 'behind')
   assert.equal(r.behindCount, 1)
 })
 
 test('diverged when both sides advance', async () => {
   const { origin, work } = cloneWithDivergence()
-  const r = await checkGitRepo({ path: work, fetch: false })
+  const r = await checkGitRepo({ path: work, fetch: true })
   assert.equal(r.status, 'diverged')
 })
 
@@ -440,7 +456,7 @@ test('error on non-repo path, does not throw', async () => {
 })
 ```
 
-注意:上面 `cloneWithDivergence0`(纯 behind:origin 领先、work 无本地提交)需按 `cloneWithDivergence` 的样子补一个 helper —— clone 后**不**做本地提交,直接让 origin 前进 1 次。两个 helper 都写进测试文件。
+注意:上面 `cloneWithDivergence0`(纯 behind:origin 领先、work 无本地提交)需按 `cloneWithDivergence` 的样子补一个 helper —— clone 后**不**做本地提交,直接让 origin 前进 1 次。两个 helper 都写进测试文件。两个 helper 的 remote 都是本地目录,behind/diverged 用例必须以 `fetch: true` 让 `checkGitRepo` 自己 fetch——不 fetch 的话 work 的 `origin/main` 停在 clone 时刻,永远观察不到 behind/diverged。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -699,7 +715,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { collectStatus } from '../lib/status.js'
 
-const CONFIG = { npmDistTag: 'latest', integrationsGlob: '~/.dsh/integrations/*' }
+// integrationsDir 指向必不存在的路径:单测不得扫描开发者本机真实的 ~/.dsh/integrations
+const CONFIG = { npmDistTag: 'latest', integrationsDir: '/nonexistent-dsh-updater-test-integrations' }
 
 function gitShapeRoot() {
   const root = mkdtempSync(join(tmpdir(), 'dsh-up-st-'))
@@ -754,7 +771,7 @@ export async function collectStatus({ config, env = {}, fetch = true }) {
     checks.push(await checkNpmPackage({ currentVersion, distTag: config.npmDistTag }))
   }
   if (shape.kind !== 'unknown') {
-    checks.push(...await checkIntegrations({ root: expandHome(config.integrationsGlob.replace(/\/\*$/, '')), fetch }))
+    checks.push(...await checkIntegrations({ root: expandHome(config.integrationsDir), fetch }))
   }
   return { shape, checks }
 }
@@ -778,12 +795,14 @@ git -C /Users/dmall/Projects/dsh-updater commit -m "feat: status aggregation acr
 
 **Files:**
 - Modify: `$R/index.js`(整体替换)
-- Modify: `$R/cordis.patch.yml`(去掉 `config:` 段,默认值进 schema)
+- Create: `$R/lib/tool.js`
 - Test: `$R/test/tool.test.js`
+- Keep: `$R/cordis.patch.yml`(`config:` 段保留——不迁 schemastery 的理由见 Global Constraints)
 
 **Interfaces:**
-- Consumes: Task 7 `collectStatus`;Task 3 探测所需 `env` 的来源:harness 根从插件自身入口文件路径向上找(与 Task 3 npm 探测同款 walk-up,复用 `detectInstallShape({ binPath: import.meta.url 转 path })` —— 插件装在 harness profile 内,walk-up 会命中 `@deepseek-ai/dsh` 或带 `.git` 的 checkout)。
-- Produces: 工具 `dsh_update_status`,输入 schema `{ detail?: boolean }`;输出 JSON 文本:`{ shape, summary: {upToDate, behind, diverged, error, noUpstream}, checks }`(`detail=false` 时 `checks` 只留 target/kind/status/behindCount)。
+- Consumes: Task 7 `collectStatus`;Task 3 探测所需 `env` 的来源:**当前运行中 dsh 的入口路径** `realpathSync(process.argv[1])`(源码形态 argv[1] 落在 harness 仓内,npm 形态落在 `@deepseek-ai/dsh` 包内,再交 Task 3 的 walk-up 判定)。**不要用插件自身 `import.meta.url`**——`link:` 安装下插件被 symlink 进 profile,其真实路径是本插件仓,walk-up 永远到不了 harness(2026-09-10 修订,依据 publish 指南与本机 `~/.dsh/profiles/web/node_modules/` 实况)。
+- 工具契约(已对照 `@deepseek-ai/dsh-tools` 的 `ToolRuntime.register` 与 cordis-host-runner 沙箱 guard 确认):裸 `ctx.tools.register()` **必须声明 `output: { schema, render }`**,否则注册抛 TypeError;`execute` 签名是 **`execute(args, exec)`**,第一参数是模型入参。
+- Produces: 工具 `dsh_update_status`,输入 schema `{ detail?: boolean }`;output schema `{ type: 'string' }`,execute 返回 JSON 文本:`{ shape, summary: {upToDate, behind, diverged, error, noUpstream}, checks }`(`detail=false` 时 `checks` 只留 target/kind/status/behindCount/error,保留 error 便于压缩视图下仍可诊断)。
 
 - [ ] **Step 1: 写失败测试(注入 fake collectStatus,验证工具输出裁剪)**
 
@@ -810,7 +829,8 @@ test('summary counts aggregate statuses', async () => {
 
 test('detail=false strips refs from checks', async () => {
   const tool = createStatusTool({ collectStatus: async () => FAKE })
-  const out = JSON.parse(await tool.execute({}, { detail: false }))
+  // 真实签名 execute(args, exec):第一参数才是模型入参
+  const out = JSON.parse(await tool.execute({ detail: false }, {}))
   assert.equal(out.checks[0].localRef, undefined)
   assert.equal(out.checks[0].behindCount, 3)
 })
@@ -826,12 +846,18 @@ Expected: FAIL(模块不存在)
 ```js
 export function createStatusTool({ collectStatus }) {
   return {
+    name: 'dsh_update_status',
     description: 'Show dsh updater status: install shape, harness and integration repos vs upstream.',
     parameters: {
       type: 'object',
       properties: { detail: { type: 'boolean', description: 'Include commit refs in per-repo results.' } },
     },
-    async execute(_ctx, { detail = true }) {
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: String(value) }],
+    },
+    async execute(args, _exec) {
+      const { detail = true } = args ?? {}
       const { shape, checks } = await collectStatus({})
       const summary = { upToDate: 0, behind: 0, diverged: 0, error: 0, noUpstream: 0 }
       for (const c of checks) {
@@ -841,7 +867,7 @@ export function createStatusTool({ collectStatus }) {
       return JSON.stringify({
         shape,
         summary,
-        checks: detail ? checks : checks.map(({ localRef, remoteRef, error, ...rest }) => rest),
+        checks: detail ? checks : checks.map(({ localRef, remoteRef, ...rest }) => rest),
       }, null, 2)
     },
   }
@@ -858,62 +884,65 @@ Expected: 2 个 PASS
 `$R/index.js` 整体替换为:
 
 ```js
-import Schema from '@deepseek-ai/schemastery'
+import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { collectStatus } from './lib/status.js'
 import { createStatusTool } from './lib/tool.js'
 
 export const name = 'dsh-updater'
+// 工具注册要等 tools 服务就绪(与 harness 全部插件一致的要求)
+export const inject = ['tools']
 
-export const Config = Schema.object({
-  checkOnStart: Schema.boolean().default(true),
-  checkIntervalMinutes: Schema.number().default(30).min(5),
-  autoApply: Schema.boolean().default(false),
-  idleQuietMs: Schema.number().default(120000),
-  npmDistTag: Schema.string().default('latest'),
-  integrationsGlob: Schema.string().default('~/.dsh/integrations/*'),
-})
+const DEFAULTS = {
+  checkOnStart: true,
+  checkIntervalMinutes: 30,
+  autoApply: false,
+  idleQuietMs: 120000,
+  npmDistTag: 'latest',
+  integrationsDir: '~/.dsh/integrations',
+}
+
+function dshBinPath() {
+  // spec §2:从运行中 dsh 的 bin 路径回溯 harness 根 / npm 包。
+  // 不用插件自身 import.meta.url:link: 安装下其真实路径是本插件仓,walk-up 永远到不了 harness。
+  try { return realpathSync(process.argv[1]) } catch { return fileURLToPath(import.meta.url) }
+}
 
 export function apply(ctx, config) {
-  const binPath = fileURLToPath(import.meta.url)
-  const runStatus = () => collectStatus({ config, env: { binPath }, fetch: true })
+  const cfg = { ...DEFAULTS, ...config }
+  const binPath = dshBinPath()
+  const runStatus = () => collectStatus({ config: cfg, env: { binPath }, fetch: true })
     .then(({ shape, checks }) => {
       const problems = checks.filter(c => c.status === 'behind' || c.status === 'diverged' || c.status === 'error')
-      if (problems.length) ctx.logger.info('dsh-updater: %d update-relevant results (shape=%s)', problems.length, shape.kind)
+      if (problems.length) ctx.logger?.info?.('dsh-updater: %d update-relevant results (shape=%s)', problems.length, shape.kind)
     })
-    .catch(e => ctx.logger.warn('dsh-updater check failed: %s', e?.message ?? e))
+    .catch(e => ctx.logger?.warn?.('dsh-updater check failed: %s', e?.message ?? e))
 
-  if (config.checkOnStart) void runStatus()
+  if (cfg.checkOnStart) void runStatus()
 
-  const timer = setInterval(() => void runStatus(), config.checkIntervalMinutes * 60_000)
+  const timer = setInterval(() => void runStatus(), cfg.checkIntervalMinutes * 60_000)
   timer.unref?.()
-  ctx.on('dispose', () => clearInterval(timer))
+  // timer 是 cordis 不管理的资源,按教程用 ctx.effect 包一层,卸载时执行 disposer
+  ctx.effect(() => () => clearInterval(timer))
 
-  ctx.tools.register({
-    name: 'dsh_update_status',
-    ...createStatusTool({ collectStatus: (opts) => collectStatus({ ...opts, config, env: { binPath } }) }),
-  })
+  ctx.tools.register(createStatusTool({
+    collectStatus: (opts = {}) => collectStatus({ ...opts, config: cfg, env: { binPath } }),
+  }))
 }
 ```
 
-同步修改 `$R/cordis.patch.yml`,把 `- insert:` 段改为不带 `config:`(默认值已进 schema):
+`$R/cordis.patch.yml` **不需要改动**:`config:` 段保留——config 默认值由 patch 行下发(spec §7 原意),代码侧 `DEFAULTS` 仅作 patch 缺失时的兜底。
 
-```yaml
-- insert:
-    - id: dsh-updater
-      name: dsh-updater
-```
-
-注意:`ctx.on('dispose', …)` 若运行时报无此事件,改用 `ctx.effect(() => clearInterval(timer))`(cordis 注册即 effect,HMR 卸载时自动清理);两者以实际能跑为准,优先 `ctx.effect`。
+timer 清理已直接采用 `ctx.effect(() => () => clearInterval(timer))`(cordis 教程对 timer 类资源的既定做法;`ctx.on('dispose')` 在整个 harness 无使用者,不要采用)。
 
 - [ ] **Step 6: 全量测试 + 提交**
 
 Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/`
-Expected: 全部 PASS(`@deepseek-ai/schemastery` 在插件目录不可解析会导致 index.js 无法被 `node --test` 直接 import —— 若如此,在 `$R` 下 `pnpm add @deepseek-ai/schemastery` 作为 devDependency 仅供测试,或在 smoke/tool 测试中不对 index.js 做 import 断言,改为对 lib/* 断言;二选一,以实际报错为准,优先前者)
+Expected: 全部 PASS(index.js 只 import node 内建与本地模块,`node --test` 可直接 import,无外部依赖解析问题)
 
 ```bash
 git -C /Users/dmall/Projects/dsh-updater add index.js cordis.patch.yml lib/tool.js test/tool.test.js package.json
-git -C /Users/dmall/Projects/dsh-updater commit -m "feat: dsh_update_status tool, config schema, periodic check"
+git -C /Users/dmall/Projects/dsh-updater commit -m "feat: dsh_update_status tool, periodic check, argv-derived shape detection"
 ```
 
 - [ ] **Step 7: 本机真机验收(git 形态只读端到端)**
@@ -929,6 +958,20 @@ pnpm --dir /Users/dmall/Projects/deepseek-harness dsh --profile web --dump-confi
 
 ## Self-Review 记录
 
-- **Spec 覆盖**:M1 对应 spec §8 里程碑 1;§2 形态探测 → Task 3/7;§3 integrations → Task 6/7;§5 `dsh_update_status` → Task 8;§7 config 六字段 → Task 1/8(schema 默认值与 spec §7 一致);§9 测试要点 → Task 3(fake 目录)/4/5(假 npmBin)/6。§4/§6 的更新与回滚属 M2/M3,不在本计划。
-- **占位符**:无 TBD;Task 4 Step 1 对缺失的 `cloneWithDivergence0` helper 给出了明确构造说明(非 "similar to"),Task 8 的 `ctx.effect` 备选给了判据与优先级。
-- **类型一致**:`CheckResult` 形状在 Task 4 定义、Task 5/6/7 沿用同名字段(target/kind/status/behindCount/localRef/remoteRef/error);`collectStatus` 签名在 Task 7 定义、Task 8 消费一致;`isNewer`/`compareVersions` 在 Task 2 定义、Task 5 使用一致。
+(2026-09-10 按对照 harness 源码的 review 修订,详见下方修订记录)
+
+- **Spec 覆盖**:M1 对应 spec §8 里程碑 1;§2 形态探测 → Task 3/7/8(bin 路径取 `process.argv[1]`,即 spec §2「bin 路径回溯」原意);§3 integrations → Task 6/7;§5 `dsh_update_status` → Task 8(补 harness 强制的 `output` 声明与 `execute(args, exec)` 签名);§7 config 字段 → Task 1(patch 行下发,即 spec §7 原文形态);§9 测试要点 → Task 3(fake 目录)/4/5(假 npmBin)/6。§4/§6 的更新与回滚属 M2/M3,不在本计划。
+- **占位符**:无 TBD;Task 4 Step 1 对缺失的 `cloneWithDivergence0` helper 给出了明确构造说明(非 "similar to")。
+- **类型一致**:`CheckResult` 形状在 Task 4 定义(`kind` 含 Task 5 的 `harness-npm`;`behindCount` 在 diverged 时亦 >0,与 Task 4/5 实现一致),Task 5/6/7 沿用同名字段;`collectStatus` 签名在 Task 7 定义、Task 8 消费一致;`isNewer`/`compareVersions` 在 Task 2 定义、Task 5 使用一致。
+
+## 修订记录(2026-09-10,依据对照 harness 源码与本机实况的 review)
+
+1. **形态探测输入改为 `process.argv[1]`**(Task 3 walk-up 逻辑扩展、Task 8 env 来源):`dsh plugin add <本地路径>` 是 pnpm `link:` 符号链接安装,插件自身 `import.meta.url` 解析回本插件仓,walk-up 永远到不了 harness,原方案恒为 `unknown`。证据:publish.md 的 `link:` 语义、本机 `~/.dsh/profiles/web/node_modules/` 全部为指向 `~/Projects/*` 的 symlink。
+2. **walk-up 时 git 标记优先于 npm 包名**(Task 3):源码 checkout 的 `apps/cli/package.json` 同名 `@deepseek-ai/dsh`,但仓库根在其上方,自内向外必须 git 先胜出。
+3. **`dsh_update_status` 补 `output: { schema, render }` 并改为 `execute(args, exec)`**(Task 8):`ToolRuntime.register()` 对缺 `output` 的裸注册抛 TypeError;第一参数是模型入参——原 `(ctx, args)` 假设会让 `detail` 在真机上静默恒为 true(单测因模仿同一错误约定仍绿)。
+4. **index.js 补 `inject = ['tools']`,timer 清理改 `ctx.effect`**(Task 8):工具注册必须等 tools 服务就绪;`ctx.on('dispose')` 在整个 harness 无使用者。
+5. **config 默认值留在 patch 行、不引入 schemastery**(Global Constraints / Task 1 / Task 8):`@deepseek-ai/schemastery` 是 harness 内 vendor 的 `link:` 包,对独立 link 安装仓不可靠解析;spec §7 原文形态即 patch 下发。
+6. **Task 4 测试两处修正**:补 `writeFileSync`/`mkdirSync` import(否则 ReferenceError);behind/diverged 用例改 `fetch: true`(remote 是本地路径不走网络)——不 fetch 则 `origin/main` 停在 clone 时刻,behind/diverged 永远观察不到。
+7. **Task 7 单测不再扫描真实 `~/.dsh/integrations`**:`integrationsDir` 指向必不存在路径。
+8. **`integrationsGlob` → `integrationsDir`**(与 spec §7 同步):实现只支持「单目录一级子目录」语义,glob 命名误导。
+9. **CheckResult 契约收紧**(Task 4):`kind` 联合补 `harness-npm`;`behindCount` 在 diverged 时亦 >0(与实现一致);`detail=false` 压缩视图保留 `error` 字段。
