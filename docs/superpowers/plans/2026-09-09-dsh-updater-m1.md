@@ -19,7 +19,7 @@
 - 版本比较必须支持 prerelease(`0.1.5-alpha.1` < `0.1.5`)。
 - 插件对路径只操作「探测得出」的目标,工具入参不接收自由路径(spec §9)。
 - config 默认值经 `cordis.patch.yml` 的 insert 行下发(spec §7 原文即此形态),`index.js` 对各字段再做代码级兜底默认;**不 import schemastery**(`@deepseek-ai/schemastery` 是 harness 内 vendor 的 `link:` 包,对独立 link 安装仓不可靠解析;schema 迁移推迟到出现真实需要)。
-- 测试命令统一:`node --test --test-reporter=spec "$R/test/"`。
+- 测试命令统一:`node --test --test-reporter=spec "$R"/test/*.test.js`(显式 glob;不用目录位置参数——Node ≥22 有目录参数回归,本机 v26.7.0 实测把目录当测试文件执行)。
 
 ---
 
@@ -53,7 +53,7 @@ mkdir -p /Users/dmall/Projects/dsh-updater/test
   "main": "index.js",
   "files": ["index.js", "lib/", "cordis.patch.yml"],
   "engines": { "node": ">=20" },
-  "scripts": { "test": "node --test --test-reporter=spec test/" },
+  "scripts": { "test": "node --test --test-reporter=spec test/*.test.js" },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }
 ```
@@ -110,7 +110,7 @@ test('apply logs and does not throw', () => {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/`
+Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/*.test.js`
 Expected: 2 个测试 PASS
 
 - [ ] **Step 5: git init + 提交**
@@ -779,7 +779,7 @@ export async function collectStatus({ config, env = {}, fetch = true }) {
 
 - [ ] **Step 4: 跑全部测试确认通过**
 
-Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/`
+Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/*.test.js`
 Expected: 此前所有测试仍 PASS + 新增 2 个 PASS
 
 - [ ] **Step 5: 提交**
@@ -939,7 +939,7 @@ timer 清理已直接采用 `ctx.effect(() => () => clearInterval(timer))`(cordi
 
 - [ ] **Step 6: 全量测试 + 提交**
 
-Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/`
+Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/*.test.js`
 Expected: 全部 PASS(index.js 只 import node 内建与本地模块,`node --test` 可直接 import,无外部依赖解析问题)
 
 ```bash
