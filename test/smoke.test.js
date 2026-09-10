@@ -9,6 +9,6 @@ test('plugin exports name and apply', () => {
 
 test('apply logs and does not throw', () => {
   const logs = []
-  apply({ logger: { info: (m) => logs.push(m) } }, { checkOnStart: true })
+  apply({ logger: { info: (m) => logs.push(m) }, effect: (fn) => fn(), tools: { register: () => () => {} } }, { checkOnStart: true })
   assert.match(logs[0], /dsh-updater loaded/)
 })
