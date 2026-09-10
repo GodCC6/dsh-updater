@@ -415,7 +415,7 @@ function cloneWithDivergence() {
   // origin: 1 commit;work: clone + 本地领先 1 + 远端再进 1 → diverged
   const base = mkdtempSync(join(tmpdir(), 'dsh-up-git-'))
   const origin = join(base, 'origin'), work = join(base, 'work')
-  mkdirSync(origin)
+  mkdirSync(origin); mkdirSync(work)
   sh(origin, 'init', '-b', 'main')
   commit(origin, 'a.txt', 'init')
   sh(work, 'clone', origin, '.')           // clone 自带 origin remote
@@ -427,7 +427,7 @@ function cloneWithDivergence() {
 test('up-to-date when work matches origin', async () => {
   const base = mkdtempSync(join(tmpdir(), 'dsh-up-git-'))
   const origin = join(base, 'origin'), work = join(base, 'work')
-  mkdirSync(origin); sh(origin, 'init', '-b', 'main')
+  mkdirSync(origin); mkdirSync(work); sh(origin, 'init', '-b', 'main')
   commit(origin, 'a.txt', 'init')
   sh(work, 'clone', origin, '.')
   const r = await checkGitRepo({ path: work, fetch: false })
@@ -456,7 +456,7 @@ test('error on non-repo path, does not throw', async () => {
 })
 ```
 
-注意:上面 `cloneWithDivergence0`(纯 behind:origin 领先、work 无本地提交)需按 `cloneWithDivergence` 的样子补一个 helper —— clone 后**不**做本地提交,直接让 origin 前进 1 次。两个 helper 都写进测试文件。两个 helper 的 remote 都是本地目录,behind/diverged 用例必须以 `fetch: true` 让 `checkGitRepo` 自己 fetch——不 fetch 的话 work 的 `origin/main` 停在 clone 时刻,永远观察不到 behind/diverged。
+注意:上面 `cloneWithDivergence0`(纯 behind:origin 领先、work 无本地提交)需按 `cloneWithDivergence` 的样子补一个 helper —— clone 后**不**做本地提交,直接让 origin 前进 1 次。两个 helper 都写进测试文件。两个 helper 的 remote 都是本地目录,behind/diverged 用例必须以 `fetch: true` 让 `checkGitRepo` 自己 fetch——不 fetch 的话 work 的 `origin/main` 停在 clone 时刻,永远观察不到 behind/diverged。另外所有 `sh(work, 'clone', …)` 调用前必须先 `mkdirSync(work)`——`git -C work clone` 的 `-C` 要求目录已存在(git clone 本可自建目录,但 `-C` 先于 clone 执行,否则报 `fatal: cannot change to '.../work'`)。
 
 - [ ] **Step 2: 跑测试确认失败**
 
