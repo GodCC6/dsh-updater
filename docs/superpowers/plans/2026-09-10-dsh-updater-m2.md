@@ -10,6 +10,8 @@
 
 **Spec:** `/Users/dmall/Projects/dsh-updater/docs/superpowers/specs/2026-09-09-dsh-updater-plugin-design.md`(§2 git 更新策略、§3 integrations、§4 触发与安全、§5 工具、§6 错误处理、§8 里程碑 2)
 
+> **勘误注记(2026-09-10,执行后回填)**:本计划文本未回写执行期修正,以 git 历史为准——①三处测试 fixture 缺陷(basePair 的 local-base 矛盾 ×2、Task 3 origin 误入 root)已按裁定在实现中修正;②Task 2 回滚的 `reset --hard` 剥离已 abort 的 signal(commit `0af3b0d`,否则取消时回滚恒失败);③终审后新增脏树门禁(`status --porcelain` 非空拒绝 pull,commit `9381d8c`)与 pipeline finish 必达防护。阅读本计划时以仓内最终代码为准。
+
 ## Global Constraints
 
 - 仓位置:`/Users/dmall/Projects/dsh-updater`(下文以 `$R` 指代;bash 步骤一律绝对路径,不 `cd`)。
