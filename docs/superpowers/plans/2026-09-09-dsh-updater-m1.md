@@ -666,7 +666,7 @@ import { join } from 'node:path'
 import { checkGitRepo } from './git-check.js'
 
 export function listIntegrationRepos({ root, fs = { existsSync, readdirSync } }) {
-  if (!fs.existsSync(root)) return []
+  if (!root || !fs.existsSync(root)) return []
   return fs.readdirSync(root, { withFileTypes: true })
     .filter(d => d.isDirectory() && !d.name.startsWith('.'))
     .filter(d => fs.existsSync(join(root, d.name, '.git')))
@@ -796,6 +796,7 @@ git -C /Users/dmall/Projects/dsh-updater commit -m "feat: status aggregation acr
 **Files:**
 - Modify: `$R/index.js`(整体替换)
 - Create: `$R/lib/tool.js`
+- Modify: `$R/test/smoke.test.js`(fake ctx 补 `effect` 与 `tools` stub——Task 8 的 apply 会调 `ctx.effect` 与 `ctx.tools.register`,Task 1 的 fake ctx 只有 logger,直接跑会 TypeError)
 - Test: `$R/test/tool.test.js`
 - Keep: `$R/cordis.patch.yml`(`config:` 段保留——不迁 schemastery 的理由见 Global Constraints)
 
@@ -859,11 +860,9 @@ export function createStatusTool({ collectStatus }) {
     async execute(args, _exec) {
       const { detail = true } = args ?? {}
       const { shape, checks } = await collectStatus({})
+      const KEYS = { 'up-to-date': 'upToDate', behind: 'behind', diverged: 'diverged', error: 'error', 'no-upstream': 'noUpstream' }
       const summary = { upToDate: 0, behind: 0, diverged: 0, error: 0, noUpstream: 0 }
-      for (const c of checks) {
-        if (c.status in summary) summary[c.status]++
-        else summary.error++
-      }
+      for (const c of checks) summary[KEYS[c.status] ?? 'error']++
       return JSON.stringify({
         shape,
         summary,
@@ -911,6 +910,7 @@ function dshBinPath() {
 export function apply(ctx, config) {
   const cfg = { ...DEFAULTS, ...config }
   const binPath = dshBinPath()
+  ctx.logger?.info?.('dsh-updater loaded, checkOnStart=%s', cfg.checkOnStart)
   const runStatus = () => collectStatus({ config: cfg, env: { binPath }, fetch: true })
     .then(({ shape, checks }) => {
       const problems = checks.filter(c => c.status === 'behind' || c.status === 'diverged' || c.status === 'error')
@@ -935,13 +935,15 @@ export function apply(ctx, config) {
 
 timer 清理已直接采用 `ctx.effect(() => () => clearInterval(timer))`(cordis 教程对 timer 类资源的既定做法;`ctx.on('dispose')` 在整个 harness 无使用者,不要采用)。
 
+同步修改 `$R/test/smoke.test.js` 第二个用例的 fake ctx:从 `{ logger: { info: (m) => logs.push(m) } }` 扩为 `{ logger: { info: (m) => logs.push(m) }, effect: (fn) => fn(), tools: { register: () => () => {} } }`;两条断言保持不变(新 apply 仍在入口打 `dsh-updater loaded` 日志)。
+
 - [ ] **Step 6: 全量测试 + 提交**
 
 Run: `node --test --test-reporter=spec /Users/dmall/Projects/dsh-updater/test/`
 Expected: 全部 PASS(index.js 只 import node 内建与本地模块,`node --test` 可直接 import,无外部依赖解析问题)
 
 ```bash
-git -C /Users/dmall/Projects/dsh-updater add index.js cordis.patch.yml lib/tool.js test/tool.test.js package.json
+git -C /Users/dmall/Projects/dsh-updater add index.js cordis.patch.yml lib/tool.js test/tool.test.js test/smoke.test.js package.json
 git -C /Users/dmall/Projects/dsh-updater commit -m "feat: dsh_update_status tool, periodic check, argv-derived shape detection"
 ```
 
