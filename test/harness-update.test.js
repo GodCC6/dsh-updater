@@ -108,6 +108,18 @@ test('diverged: refused, pnpm never invoked, nothing rolled back', async () => {
   assert.equal(r.steps[0].status, 'diverged')
 })
 
+test('working tree with uncommitted changes is refused before pull', async () => {
+  const { work } = basePair()
+  const before = head(work)
+  const { bin, log } = fakePnpm()
+  writeFileSync(join(work, 'a.txt'), 'dirty\n') // 已跟踪文件的未提交改动
+  const r = await runHarnessUpdate({ path: work, pnpmBin: bin })
+  assert.equal(r.ok, false)
+  assert.match(r.steps[0].error, /not clean/)
+  assert.equal(head(work), before) // 无任何树变更(包括 reset --hard 不发生)
+  assert.deepEqual(pnpmCalls(log), []) // pull 从未开始,pnpm 不会被调用
+})
+
 test('abort during install: rejects cancelled and rolls back to pre-run HEAD', async () => {
   const { origin, work } = basePair()
   commit(origin, 'b.txt', 'remote advance')

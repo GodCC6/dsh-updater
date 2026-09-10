@@ -83,6 +83,22 @@ test('harnessPath null → integrations only', async () => {
   assert.equal(summary.ok, true)
 })
 
+test('unexpected exception from harness → ok:false, gate released, error staged', async () => {
+  const state = createUpdateState()
+  state.begin()
+  const summary = await runUpdatePipeline({
+    updateState: state,
+    harnessPath: '/harness',
+    integrationsRoot: '/ints',
+    runHarnessUpdateImpl: async () => { throw new Error('boom') },
+    runIntegrationsUpdateImpl: async () => [],
+  })
+  assert.equal(summary.ok, false)
+  assert.equal(summary.cancelled, false)
+  assert.equal(state.snapshot().running, false)
+  assert.ok(state.snapshot().log.some(e => e.step === 'error' && e.status === 'failed'))
+})
+
 test('abort() flips the signal the pipeline sees', async () => {
   const state = createUpdateState()
   state.begin()
