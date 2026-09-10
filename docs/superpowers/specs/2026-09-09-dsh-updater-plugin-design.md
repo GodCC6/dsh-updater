@@ -34,7 +34,7 @@ npm 形态的替换沿用社区已验证的生命周期:运行期只下载暂存
 ## 4. 触发与安全模型
 
 - **默认(确认门)**:启动时检查一次 + 每 30 分钟复查,只在会话/面板提示"有新版";用户在会话里说更新、调 `dsh_update_run`、或面板点按钮,才执行。检查与更新永远分离。
-- **自动模式**:显式 opt-in(配置项 `autoApply: false` 默认关)。开启后发现新版先 stage,等 **idle 条件**(无运行中 background job 且会话日志静默 ≥ 2 分钟)才应用。
+- **自动模式**:显式 opt-in(配置项 `autoApply: false` 默认关)。M4 已实现:开启后发现新版先等 **idle 条件**(idle = 无运行 job(`ctx.jobs.list`)且会话静默 ≥ `idleQuietMs`(`session/event` 时间戳))才应用。
 - **git 形态回滚**:`pull` 仅 `--ff-only`,本地有分叉(diverged)直接报错不自动 merge/rebase;`pnpm install --frozen-lockfile` 或 `pnpm build` 任一失败 → `git reset --hard ORIG_HEAD` 回原 commit 并报告。
 - **npm 形态回滚**:替换前保留旧版安装目录副本,替换失败自动还原。
 - **面板 API 只答 loopback**(`127.0.0.1`/`localhost`/`::1`),不进反代/隧道。特权操作为零(无 sudo)——npm 形态的 `npm install -g` 只写用户 prefix;若用户 prefix 需要提权,报告并让用户手动执行,不代做。
@@ -47,9 +47,11 @@ npm 形态的替换沿用社区已验证的生命周期:运行期只下载暂存
 |---|---|
 | `dsh_update_status` | 本体(形态、当前版本、远端版本)+ 各 integration 仓的对比与状态;进行中任务的阶段;挂起的重启/应用 |
 | `dsh_update_run` | 执行检查到的更新(本体按形态分发 + integrations 全量);返回逐步结果 |
-| `dsh_update_cancel` | 取消挂起的自动应用/重启 |
+| `dsh_update_cancel` | 取消挂起的自动应用/重启(**M4 交付**) |
 
-### Web 面板(Settings → Plugins 下新屏)
+Web 面板拆至 M5。
+
+### Web 面板(Settings → Plugins 下新屏,M5)
 
 - 本体 + 各插件版本胶囊(已最新 / 可升级 / 进行中 / 失败)。
 - 按钮:检查更新 / 一键更新 / 取消。
@@ -81,7 +83,8 @@ npm 形态的替换沿用社区已验证的生命周期:运行期只下载暂存
 1. **M1 检查与状态**:形态探测 + 本体/integrations 比对 + `dsh_update_status`。先交付,无变更动作(仅 fetch 与 registry 查询)。
 2. **M2 git 形态更新**:确认后 pull + build + 回滚 + `dsh_update_run`。
 3. **M3 npm 形态更新**:stage + 退出后应用 + 回滚。
-4. **M4 面板与自动模式**:Web 屏、idle 感知自动应用、`dsh_update_cancel`。
+4. **M4 自动模式 + `dsh_update_cancel`**:idle 感知自动应用(无运行 job + 会话静默 ≥ idleQuietMs)、`dsh_update_cancel` 工具。**已实现。**
+5. **M5 Web 面板**:Settings → Plugins 下新屏、版本胶囊、检查/更新/取消按钮。
 
 ## 9. 测试要点
 
