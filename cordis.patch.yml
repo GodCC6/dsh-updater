@@ -1,0 +1,10 @@
+- insert:
+    - id: dsh-updater
+      name: dsh-updater
+      config:
+        checkOnStart: true
+        checkIntervalMinutes: 30
+        autoApply: false
+        idleQuietMs: 120000
+        npmDistTag: latest
+        integrationsDir: '~/.dsh/integrations'
