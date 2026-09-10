@@ -34,7 +34,7 @@
 - Create: `$R/.gitignore`(`node_modules/`)
 
 **Interfaces:**
-- Produces: 可被后续任务扩展的插件入口 `index.js`,导出 `name`、`Config`(Schemastery schema)、`apply(ctx, config)`;bundle 清单使 profile 加载后出现 `dsh-updater` 层。
+- Produces: 可被后续任务扩展的插件入口 `index.js`,导出 `name`、`apply(ctx, config)`(不导出 Config——config 默认值走 patch 行,见 Global Constraints);bundle 清单使 profile 加载后出现 `dsh-updater` 层。
 
 - [ ] **Step 1: 创建目录与 package.json**
 
