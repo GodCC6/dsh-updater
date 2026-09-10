@@ -6,6 +6,6 @@
   "main": "index.js",
   "files": ["index.js", "lib/", "cordis.patch.yml"],
   "engines": { "node": ">=20" },
-  "scripts": { "test": "node --test --test-reporter=spec test/" },
+  "scripts": { "test": "node --test --test-reporter=spec test/*.test.js" },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }
