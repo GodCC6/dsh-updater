@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { listIntegrationRepos, checkIntegrations } from '../lib/integrations.js'
@@ -20,4 +20,11 @@ test('lists only visible first-level dirs containing .git', () => {
 
 test('missing root yields empty array, does not throw', async () => {
   assert.deepEqual(await checkIntegrations({ root: '/nonexistent-int-root' }), [])
+})
+
+test('root that is a regular file yields empty array, does not reject', async () => {
+  const fileRoot = join(mkdtempSync(join(tmpdir(), 'dsh-up-int-')), 'not-a-dir')
+  writeFileSync(fileRoot, 'plain file') // existsSync=true,但 readdirSync 抛 ENOTDIR
+  await assert.doesNotReject(() => checkIntegrations({ root: fileRoot }))
+  assert.deepEqual(await checkIntegrations({ root: fileRoot }), [])
 })

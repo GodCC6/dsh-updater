@@ -23,3 +23,10 @@ test('detail=false strips refs from checks', async () => {
   assert.equal(out.checks[0].localRef, undefined)
   assert.equal(out.checks[0].behindCount, 3)
 })
+
+test('collectStatus rejection yields error JSON, never rejects', async () => {
+  const tool = createStatusTool({ collectStatus: async () => { throw new Error('boom') } })
+  const out = JSON.parse(await tool.execute({}, {}))
+  assert.equal(out.shape, null)
+  assert.match(out.error, /boom/)
+})

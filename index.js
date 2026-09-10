@@ -35,7 +35,9 @@ export function apply(ctx, config) {
 
   if (cfg.checkOnStart) void runStatus()
 
-  const timer = setInterval(() => void runStatus(), cfg.checkIntervalMinutes * 60_000)
+  // config 值是用户可改的 patch 行:0/负数/NaN 会被 setInterval 钳到 ~1ms,造成子进程风暴
+  const minutes = Number.isFinite(cfg.checkIntervalMinutes) && cfg.checkIntervalMinutes >= 1 ? cfg.checkIntervalMinutes : 30
+  const timer = setInterval(() => void runStatus(), minutes * 60_000)
   timer.unref?.()
   // timer 是 cordis 不管理的资源,按教程用 ctx.effect 包一层,卸载时执行 disposer
   ctx.effect(() => () => clearInterval(timer))
