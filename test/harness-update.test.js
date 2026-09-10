@@ -107,3 +107,18 @@ test('diverged: refused, pnpm never invoked, nothing rolled back', async () => {
   assert.equal(r.steps[0].step, 'pull')
   assert.equal(r.steps[0].status, 'diverged')
 })
+
+test('abort during install: rejects cancelled and rolls back to pre-run HEAD', async () => {
+  const { origin, work } = basePair()
+  commit(origin, 'b.txt', 'remote advance')
+  const before = head(work)
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-up-pnpm-'))
+  const bin = join(dir, 'fake-pnpm')
+  writeFileSync(bin, '#!/bin/sh\nsleep 5\nexit 0\n')
+  chmodSync(bin, 0o755)
+  const c = new AbortController()
+  const p = runHarnessUpdate({ path: work, pnpmBin: bin, signal: c.signal })
+  await new Promise(r => setTimeout(r, 300)).then(() => c.abort('test'))
+  await assert.rejects(p, (e) => e.cancelled === true)
+  assert.equal(head(work), before) // 回滚必须真正落地:树不得留在新 commit(spec §6)
+})
