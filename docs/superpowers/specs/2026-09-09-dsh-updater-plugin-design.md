@@ -1,7 +1,7 @@
 # dsh-updater 插件设计(npm + git 双形态自动更新)
 
 日期:2026-09-09
-状态:设计已与用户对齐;2026-09-10 修订(安装失败也纳入回滚触发;integrationsGlob → integrationsDir;M1 措辞改「无变更动作」);实现按 M1 计划推进(`docs/superpowers/plans/2026-09-09-dsh-updater-m1.md`)
+状态:设计已与用户对齐;2026-09-10 修订(安装失败也纳入回滚触发;integrationsGlob → integrationsDir;M1 措辞改「无变更动作」);2026-09-11 修订(§3 integrations 枚举兼容 `<name>/repo/` 嵌套布局,直接仓优先);实现按 M1 计划推进(`docs/superpowers/plans/2026-09-09-dsh-updater-m1.md`)
 落点:独立仓 `~/Projects/dsh-updater`(方案 B),以 `dsh plugin --profile web add github:<owner>/dsh-updater` 方式安装;本 spec 已随仓迁入 `docs/superpowers/specs/`(原起草于 vps-infra,2026-09-09 迁入)。
 
 ## 1. 背景与目标
@@ -29,7 +29,7 @@ npm 形态的替换沿用社区已验证的生命周期:运行期只下载暂存
 
 ## 3. Integrations(插件仓)更新
 
-两种形态下都执行:枚举 `~/.dsh/integrations/*/` 中含 `.git` 的目录(如 superpowers),每项独立 `git fetch` 比对。与本体的检查/更新合并为一份清单,每项独立报告:`up-to-date` / `behind N commits` / `updated` / `diverged(需人工)` / `failed`。
+两种形态下都执行:枚举 `~/.dsh/integrations/*/` 中可识别的 git 仓——一级目录本身含 `.git`,或其 `repo/` 子目录含 `.git`(真实布局如 `superpowers/repo/`);两者并存时直接仓优先。每项独立 `git fetch` 比对。与本体的检查/更新合并为一份清单,每项独立报告:`up-to-date` / `behind N commits` / `updated` / `diverged(需人工)` / `failed`。
 
 ## 4. 触发与安全模型
 
