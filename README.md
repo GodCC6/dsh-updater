@@ -14,6 +14,7 @@
 - **手动更新** `dsh_update_run`：后台 job 执行更新。git 形态为 `git pull --ff-only` → `pnpm install --frozen-lockfile` → `pnpm build`；integration 仓逐仓 ff-only、互不影响。
 - **取消更新** `dsh_update_cancel`：随时取消进行中的更新，自动回滚已完成的部分步骤，后台 job 结算为 killed。
 - **自动模式**（可选，`autoApply: true`）：定时检查发现新版且系统空闲（无运行 job 且会话静默 ≥ `idleQuietMs`）时自动应用；diverged / dirty 的目标只报告不动；同一版本失败后不重复尝试。
+- **Web 面板** `Settings → Updater`：状态胶囊、检查/一键更新/取消按钮、pendingRestart 重启横幅（零构建；老宿主自动禁用，Host 侧 agent 工具不受影响）。
 
 ## 安全模型
 
@@ -49,7 +50,6 @@ dsh plugin --profile web add ~/Projects/dsh-updater
 ## Roadmap
 
 - [ ] npm 形态自动更新（stage → 退出后原子替换 → 失败回滚）
-- [ ] Web 面板（Settings → Plugins 下的版本胶囊、检查/更新/取消按钮）
 
 ## 开发
 
