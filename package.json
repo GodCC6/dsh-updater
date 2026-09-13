@@ -4,11 +4,22 @@
   "description": "Dual-mode (git checkout / npm global) auto-update plugin for DeepSeek Harness",
   "type": "module",
   "main": "index.js",
-  "files": ["index.js", "lib/", "cordis.patch.yml"],
+  "files": ["index.js", "client.js", "lib/", "cordis.patch.yml"],
   "engines": { "node": ">=20" },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
   "author": "GodCC6",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/GodCC6/dsh-updater.git" },
   "scripts": { "test": "node --test --test-reporter=spec test/*.test.js" },
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-connection", "@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-locale", "@deepseek-ai/dsh-client-ui-settings"]
+    }
+  }
 }

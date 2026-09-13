@@ -9,10 +9,12 @@ import { createUpdateState } from './lib/update-state.js'
 import { runUpdatePipeline } from './lib/update-run.js'
 import { createIdleTracker } from './lib/idle.js'
 import { createAutoApplier } from './lib/auto-apply.js'
+import { createClientRpc } from './lib/client-rpc.js'
 
 export const name = 'dsh-updater'
-// 工具注册要等 tools;jobs.start / jobs.list 要等 jobs;session/event 要等 sessions
-export const inject = ['tools', 'jobs', 'sessions']
+// 工具注册要等 tools;jobs.start / jobs.list 要等 jobs;session/event 要等 sessions;
+// client 页 RPC 桥要等 connection(存在性守卫,见 apply 内注册块)
+export const inject = ['tools', 'jobs', 'sessions', 'connection']
 
 const DEFAULTS = {
   checkOnStart: true,
@@ -123,6 +125,30 @@ export function apply(ctx, config) {
   const timer = setInterval(() => void runStatus(), minutes * 60_000)
   timer.unref?.()
   ctx.effect(() => () => clearInterval(timer))
+
+  // ---- client 页 RPC 桥('/dsh-updater'):与 agent 工具同源同门禁 ----
+  // spike Q4:handle(channel, handler) 恰两参,无 {authority} 选项;信任栅 +
+  // cookie 认证由 connection 层对 handle() 通道统一生效。handler 必须返回
+  // {ok,value}|{ok:false,error} 信封——dispatch 是 async,捕获须配 await,
+  // 否则 rejection 会穿透到 connection 层变成 HTTP 500(Task 3 review finding)。
+  const clientRpc = createClientRpc({
+    collect: collectWithUpdate,
+    startUpdate: (plan) => startUpdate(plan),
+    getSnapshot: () => updateState.snapshot(),
+    abort: (reason) => updateState.abort(reason),
+  })
+  if (ctx.connection?.rpc?.handle) {
+    const offRpc = ctx.connection.rpc.handle('/dsh-updater', async (endpoint, _payload, _signal) => {
+      try {
+        return await clientRpc.dispatch(endpoint)
+      } catch (e) {
+        return { ok: false, error: { code: 'internal', message: String(e?.message ?? e) } }
+      }
+    })
+    if (typeof offRpc === 'function') ctx.effect(() => offRpc)
+  } else {
+    ctx.logger?.info?.('dsh-updater: connection service absent — client rpc not registered')
+  }
 
   // ---- 工具注册 ----
   ctx.tools.register(createStatusTool({ collectStatus: collectWithUpdate }))
