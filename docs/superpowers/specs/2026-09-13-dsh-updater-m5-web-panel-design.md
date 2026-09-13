@@ -61,6 +61,8 @@ inject 具体包名边(对照 `api-catalog.ts` 与 sogooday 形态:slots/connect
 
 错误走宿主 connection.rpc 的既有错误协议(实现期对齐具体形状);client 轮询 `get-status` 刷新。UI 触发与 agent 触发共用 `updateState.begin` 互斥,两侧天然互斥。
 
+> 成本注记:get-status 会触发跨仓 git fetch 网络 IO;运行中(running)轮询自动降级为不 fetch 的快照读取。
+
 ## 7. 兼容与失败处理
 
 - `engines.dsh` 声明最低宿主版本(具体值实现期对照用到的 client API 定,参考 dsh-market 的 rc.6+ 底线);老宿主上 client 半边自我禁用并在 console 说明,Host 半边三个 agent 工具不受影响

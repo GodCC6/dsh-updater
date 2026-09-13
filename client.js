@@ -95,6 +95,9 @@ const DICT = {
     retry: '重试',
     idle: '空闲',
     running: '更新中…',
+    lastUpdate: '上次更新',
+    failed: '失败',
+    cancelled: '已取消',
   },
   en: {
     title: 'Software updates',
@@ -106,6 +109,9 @@ const DICT = {
     retry: 'Retry',
     idle: 'Idle',
     running: 'Updating…',
+    lastUpdate: 'Last update',
+    failed: 'Failed',
+    cancelled: 'Cancelled',
   },
 }
 
@@ -201,6 +207,12 @@ function mount(ctx, react) {
       const tt = props?.t ?? t
       const [state, setState] = useState(store.get)
       useEffect(() => store.subscribe(() => setState(store.get())), [])
+      // 轮询生命周期挂在组件挂载上:只在真正渲染本页时轮询、卸载即停,
+      // 其他 web 窗口不再空转触发 30s 轮询。start 幂等(createPoller 守卫)。
+      useEffect(() => {
+        poller.start()
+        return () => poller.stop()
+      }, [])
       const [busy, setBusy] = useState(false)
       const [note, setNote] = useState(null)
       const vm = toViewModel(state.snapshot)
@@ -227,6 +239,13 @@ function mount(ctx, react) {
         renderPills(hh, vm),
         renderButtons(hh, tt, vm, busy, onAction),
         renderSteps(hh, vm),
+        // 上次更新结果(failed/cancelled)常驻展示,别只活在一次性 note 里
+        vm.lastReason && vm.lastReason !== 'ok' && hh('div', {
+          fontSize: 12,
+          color: vm.lastReason === 'failed'
+            ? 'var(--dsw-alias-state-error-primary)'
+            : 'var(--dsw-alias-label-secondary)',
+        }, `${tt('lastUpdate')}: ${tt(vm.lastReason)}`),
         line && hh('div', { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 },
           hh('span', {
             color: state.error
@@ -240,13 +259,14 @@ function mount(ctx, react) {
           }, { onClick: refresh }, tt('retry'))))
     }
 
+    // 清理先行注册:先于任何 poller.start()(含 Section useEffect 里的那次),
+    // 杜绝「已 start、尚未注册 stop 回调」窗口内抛错导致的孤儿轮询。
+    ctx.effect(() => () => poller.stop(), 'dsh-updater: stop status poller')
+
     ctx.slots.inject('settings.section', () => ctx.slots.register({
       name: 'settings.section', id: 'dsh-updater', order: 100,
       label: () => t('title'), locale: NS,
     }, Section))
-
-    poller.start()
-    ctx.effect(() => () => poller.stop(), 'dsh-updater: stop status poller')
   } catch (reason) {
     console.info('[dsh-updater] client half disabled:', reason)
   }

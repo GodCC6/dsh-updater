@@ -14,6 +14,23 @@ test('get-status returns the collect snapshot', async () => {
   assert.equal(r.value.update.running, false)
 })
 
+test('get-status passes fetch opt to collect: false while running, true when idle', async () => {
+  // 运行中轮询降级为不 fetch 的快照读取,避免 5s 快轮的 git fetch 与 pipeline 的
+  // git pull 竞态;空闲时保持 fetch:true。断言 collect 收到的精确 opts 对象。
+  const snapshot = { running: false }
+  const seen = []
+  const collect = async (opts) => { seen.push(opts); return SNAPSHOT }
+  const r1 = await rpc({ collect, snapshot }).dispatch('get-status')
+  assert.equal(r1.ok, true)
+  assert.equal(seen.length, 1)
+  assert.deepEqual(seen.at(-1), { fetch: true })
+  snapshot.running = true
+  const r2 = await rpc({ collect, snapshot }).dispatch('get-status')
+  assert.equal(r2.ok, true)
+  assert.equal(seen.length, 2)
+  assert.deepEqual(seen.at(-1), { fetch: false })
+})
+
 test('start-update behind → started with jobId and plan', async () => {
   const collect = async () => ({ ...SNAPSHOT, checks: [{ kind: 'harness-git', target: '/h', status: 'behind', behindCount: 3 }] })
   const r = await rpc({ collect }).dispatch('start-update')
@@ -54,4 +71,5 @@ test('unknown endpoint returns a rejected-protocol value', async () => {
   const r = await rpc().dispatch('nope')
   assert.equal(r.ok, false)
   assert.equal(r.error.code, 'unknown_endpoint')
+  assert.match(r.error.message, /nope/)
 })
