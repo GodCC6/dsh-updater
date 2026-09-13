@@ -53,6 +53,8 @@ Web 面板拆至 M5。
 
 ### Web 面板(Settings → Plugins 下新屏,M5)
 
+> M5 设计已细化,见 `2026-09-13-dsh-updater-m5-web-panel-design.md`(settings.section 页 + connection.rpc 桥,零构建)。
+
 - 本体 + 各插件版本胶囊(已最新 / 可升级 / 进行中 / 失败)。
 - 按钮:检查更新 / 一键更新 / 取消。
 - 更新完成后提示"重启 dsh 生效"——**不代重启**(macOS 无 systemd;git/dev 形态的重启命令在用户手里)。
