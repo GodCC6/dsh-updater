@@ -1,12 +1,15 @@
 // dsh-updater client half — single hand-written file, zero build, zero deps.
 //
+// CLASSIC SCRIPT: client bundles are evaluated as classic scripts by the host — no ESM syntax.
+//
 // Layout (controller amendment: the runtime module system has no relative-require
 // branch — makeRequire resolves only seed words, materialized package rows and
 // registered factories, so view-model/poller/page MUST all live inline here):
 //
 //   1. Pure logic (this top section): `toViewModel`, `nextDelayMs`,
-//      `createPoller` — plain ESM exports, imported by test/*.test.js under
-//      node:test. Importing this file in Node never touches `window`.
+//      `createPoller` — top-level function declarations (a classic script has
+//      no exports); test/*.test.js reach them by running this file in a fresh
+//      vm context (test/helpers/client-bundle.js).
 //   2. Browser half (bottom section): guarded by
 //      `if (typeof window !== 'undefined' && window.__ModuleLoader__)` —
 //      registers the Settings page via the host module loader. The guard is
@@ -19,7 +22,7 @@
 // 快照 → 视图模型。纯函数:不碰 DOM、不碰网络,方便 node:test。
 const TONE = { 'up-to-date': 'ok', behind: 'behind', diverged: 'diverged', error: 'error', 'no-upstream': 'error' }
 
-export function toViewModel(snapshot) {
+function toViewModel(snapshot) {
   const update = snapshot?.update ?? {}
   const checks = snapshot?.checks ?? []
   const pills = checks.map(c => ({
@@ -45,11 +48,11 @@ export function toViewModel(snapshot) {
 }
 
 // 轮询节流:running 快轮、idle 慢轮。timer 注入,node:test 手动驱动。
-export function nextDelayMs(running, runningMs = 5000, idleMs = 30000) {
+function nextDelayMs(running, runningMs = 5000, idleMs = 30000) {
   return running ? runningMs : idleMs
 }
 
-export function createPoller({ fetch, apply, setTimer, clearTimer, runningMs = 5000, idleMs = 30000 }) {
+function createPoller({ fetch, apply, setTimer, clearTimer, runningMs = 5000, idleMs = 30000 }) {
   let timer = null
   let stopped = true
   async function tick() {
@@ -180,10 +183,12 @@ function mount(ctx, react) {
     const t = ctx.locale.bind(NS)
     const store = createStore({ snapshot: null, error: null, note: null })
 
-    // rpc.call 返回 {ok:true,value}|{ok:false,error} 信封(spike Q4);解包,
-    // 协议拒绝与传输失败统一变成 throw。
+    // rpc.call 返回 {ok:true,value}|{ok:false,error} 信封;解包,协议拒绝与传输
+    // 失败统一变成 throw。走共享 /api 通道 + `dsh-updater.` 前缀端点名,而不是
+    // 独立通道 '/dsh-updater':host 侧的 connection.rpc.handle 在 harness 里是坏的
+    // (见 lib/rpc-routes.js 顶注),独立通道根本挂不上路由。
     const call = async (endpoint) => {
-      const r = await ctx.connection.rpc.call('/dsh-updater', endpoint, {})
+      const r = await ctx.connection.rpc.call('/api', `${NS}.${endpoint}`, {})
       if (!r || r.ok !== true) throw new Error(r?.error?.message ?? 'rpc unavailable')
       return r.value
     }
@@ -273,14 +278,12 @@ function mount(ctx, react) {
 }
 
 // factory:运行时 require 只认 seed 字('react' 在 platform seed 里,spike Q3)。
-const factory = (require) => {
-  const react = require('react')
-  return {
-    inject: ['slots', 'locale', 'connection'],
-    apply(ctx) { mount(ctx, react) },
-  }
-}
-
 if (typeof window !== 'undefined' && window.__ModuleLoader__) {
-  window.__ModuleLoader__.load({ id: 'dsh-updater', factory })
+  window.__ModuleLoader__.load({
+    id: 'dsh-updater',
+    factory: (require) => {
+      const react = require('react')
+      return { inject: ['slots', 'locale', 'connection'], apply: (ctx) => mount(ctx, react) }
+    },
+  })
 }

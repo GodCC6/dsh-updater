@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { toViewModel } from '../client.js'
+import { loadClientBundle } from './helpers/client-bundle.js'
+
+// client.js 是 classic script(宿主以非 module 方式加载),经 vm context 暴露
+// 顶层 function 声明;断言与 ESM 直导时期逐字一致。
+const { toViewModel } = loadClientBundle()
 
 const base = (update = {}) => ({ shape: { kind: 'git' }, summary: {}, checks: [], update: { running: false, pendingRestart: false, lastResult: null, ...update } })
 

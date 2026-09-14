@@ -1,6 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { nextDelayMs, createPoller } from '../client.js'
+import { loadClientBundle } from './helpers/client-bundle.js'
+
+// client.js 是 classic script(宿主以非 module 方式加载),经 vm context 暴露
+// 顶层 function 声明;断言与 ESM 直导时期逐字一致。
+const { nextDelayMs, createPoller } = loadClientBundle()
 
 // fetch 是 async 函数,tick 的 apply/schedule 必然落在微任务里;
 // 用一次宏任务排空保证断言前整个 tick 周期已完成(断言语义与 brief 逐字一致)。
