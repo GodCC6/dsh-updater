@@ -243,15 +243,13 @@ function mount(ctx, react) {
       const [note, setNote] = useState(null)
       const vm = toViewModel(state.snapshot)
       const onAction = async (endpoint) => {
+        // 设计原则:进行中反馈由被点按钮的 label 换文案(busyEndpoint)承载,
+        // note 行只报结果——不再预写「检查中/启动中」。
         setBusyEndpoint(endpoint)
-        // 即时反馈先于 await:点击立刻有文字变化;cancel 不预写 note——
-        // running 视图消失本身就是反馈。
-        if (endpoint === 'get-status') setNote(tt('checking'))
-        if (endpoint === 'start-update') setNote(tt('starting'))
         try {
           const v = await call(endpoint)
-          if (endpoint === 'get-status') setNote(tt('uptodate'))       // 快照 value 上没有 reason/note,成功也要给可见反馈
-          else if (endpoint === 'start-update') setNote(v?.reason ?? v?.note ?? tt('starting'))   // refusal 显示 reason;真启动则维持「启动中」,running 视图随 refresh 接管
+          if (endpoint === 'get-status') setNote(tt('uptodate'))       // 结果:已检查,全部最新
+          else if (endpoint === 'start-update') setNote(v?.started ? null : (v?.reason ?? null))   // 真启动 → running 视图接管进度;refusal → 显示 reason
           else setNote(v?.reason ?? v?.note ?? null)                   // cancel:refusal/note 是 value 不是 error
         } catch (e) {
           setNote(String(e?.message ?? e))
