@@ -8,6 +8,8 @@
 //      { id:'dsh-updater', factory },factory(require) 返回
 //      { inject:['slots','locale','connection'], apply },且三个纯函数以
 //      顶层 function 声明的形式落在 context 全局上。
+//   C. locale DICT 双语完整:uptodate 反馈 key 两种语言都有、key 集合一致
+//      (Fix round acceptance #2:手动「检查更新」成功后必须有可见反馈)。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -33,4 +35,11 @@ test('client.js registers dsh-updater via __ModuleLoader__ and exposes pure func
   assert.equal(typeof toViewModel, 'function')
   assert.equal(typeof nextDelayMs, 'function')
   assert.equal(typeof createPoller, 'function')
+})
+
+test('locale DICT exposes uptodate in both languages with matching key sets', () => {
+  const { dict } = loadClientBundle()
+  assert.equal(dict.zh.uptodate, '已检查：全部为最新')
+  assert.equal(dict.en.uptodate, 'checked — everything up to date')
+  assert.deepEqual(Object.keys(dict.zh).sort(), Object.keys(dict.en).sort())
 })

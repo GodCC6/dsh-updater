@@ -101,6 +101,7 @@ const DICT = {
     lastUpdate: '上次更新',
     failed: '失败',
     cancelled: '已取消',
+    uptodate: '已检查：全部为最新',
   },
   en: {
     title: 'Software updates',
@@ -115,6 +116,7 @@ const DICT = {
     lastUpdate: 'Last update',
     failed: 'Failed',
     cancelled: 'Cancelled',
+    uptodate: 'checked — everything up to date',
   },
 }
 
@@ -225,7 +227,8 @@ function mount(ctx, react) {
         setBusy(true)
         try {
           const v = await call(endpoint)
-          setNote(v?.reason ?? v?.note ?? null)   // refusal/note 是 value 不是 error
+          if (endpoint === 'get-status') setNote(tt('uptodate'))   // 快照 value 上没有 reason/note,成功也要给可见反馈
+          else setNote(v?.reason ?? v?.note ?? null)               // refusal/note 是 value 不是 error
         } catch (e) {
           setNote(String(e?.message ?? e))
         }

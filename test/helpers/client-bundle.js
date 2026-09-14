@@ -7,10 +7,13 @@
 //   - registration  = __ModuleLoader__.load 捕获到的 { id, factory }
 //   - moduleFace    = registration.factory(stubRequire) 的返回值(插件面)
 //   - toViewModel / nextDelayMs / createPoller = context 上的全局函数声明
+//   - dict = 顶层 const DICT(顶层 const 不落 context 属性;同一 context 的
+//     全局 lexical environment 跨 runInContext 持久,再次求值取出。拷回 host
+//     realm,理由同 moduleFace:跨 realm 原型会让 deepEqual 误报)
 //
 // @param {{ react?: object }} [opts] - 覆盖 fake react(mount 只解构
 //   createElement/useState/useEffect,见 client.js mount 开头)
-// @returns {{ moduleFace, toViewModel, nextDelayMs, createPoller, registration }}
+// @returns {{ moduleFace, dict, toViewModel, nextDelayMs, createPoller, registration }}
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 
@@ -43,8 +46,11 @@ export function loadClientBundle(opts = {}) {
   // vm context 里 new 出来的数组原型是 context 的 Array.prototype,host 侧
   // assert/strict 的 deepEqual 按原型比较会误报;把插件面拷回 host realm。
   const moduleFace = { inject: [...rawFace.inject], apply: rawFace.apply }
+  const rawDict = vm.runInContext('DICT', context)
+  const dict = { zh: { ...rawDict.zh }, en: { ...rawDict.en } }
   return {
     moduleFace,
+    dict,
     toViewModel: context.toViewModel,
     nextDelayMs: context.nextDelayMs,
     createPoller: context.createPoller,
