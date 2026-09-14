@@ -25,11 +25,18 @@ const TONE = { 'up-to-date': 'ok', behind: 'behind', diverged: 'diverged', error
 function toViewModel(snapshot) {
   const update = snapshot?.update ?? {}
   const checks = snapshot?.checks ?? []
-  const pills = checks.map(c => ({
-    name: c.kind === 'harness-git' ? 'harness' : (c.target ?? c.kind),
-    detail: c.status === 'behind' ? `behind ${c.behindCount}` : (c.status === 'error' ? (c.error ?? 'error') : c.status),
-    tone: TONE[c.status] ?? 'error',
-  }))
+  const pills = checks.map(c => {
+    const isHarness = c.kind === 'harness-git'
+    // 集成 pill 用末两段路径段当短名(/a/b/c/d → c/d),全路径进 title 供原生
+    // tooltip;不足两段(含 0 段)回退为 target 本身。harness 保持固定短名。
+    const segs = isHarness ? [] : String(c.target ?? '').split('/').filter(Boolean)
+    return {
+      name: isHarness ? 'harness' : (segs.length >= 2 ? segs.slice(-2).join('/') : (c.target ?? c.kind)),
+      detail: c.status === 'behind' ? `behind ${c.behindCount}` : (c.status === 'error' ? (c.error ?? 'error') : c.status),
+      tone: TONE[c.status] ?? 'error',
+      title: isHarness ? undefined : c.target,
+    }
+  })
   const running = Boolean(update.running)
   const last = update.lastResult
   const steps = last?.harness?.steps ?? []
@@ -102,6 +109,9 @@ const DICT = {
     failed: '失败',
     cancelled: '已取消',
     uptodate: '已检查：全部为最新',
+    nav: '更新',
+    checking: '检查中…',
+    starting: '启动中…',
   },
   en: {
     title: 'Software updates',
@@ -117,6 +127,9 @@ const DICT = {
     failed: 'Failed',
     cancelled: 'Cancelled',
     uptodate: 'checked — everything up to date',
+    nav: 'Updates',
+    checking: 'Checking…',
+    starting: 'Starting…',
   },
 }
 
@@ -151,22 +164,26 @@ function renderPills(hh, vm) {
     ...vm.pills.map((p, i) => hh('span', {
       display: 'inline-flex', alignItems: 'center', gap: 6,
       padding: '2px 10px', borderRadius: 999, border: '1px solid var(--dsw-alias-border-l2)',
-    }, { key: i },
+    }, { key: i, ...(p.title ? { title: p.title } : {}) },
       hh('span', { width: 8, height: 8, borderRadius: '50%', background: PILL_COLOR[p.tone] ?? PILL_COLOR.error }),
       hh('span', { fontSize: 12, color: 'var(--dsw-alias-label-primary)' }, `${p.name} · ${p.detail}`))))
 }
 
-function renderButtons(hh, tt, vm, busy, onAction) {
-  const defs = [
-    { endpoint: 'get-status', label: tt('check'), disabled: vm.running || busy },
-    { endpoint: 'start-update', label: tt('update'), disabled: !vm.canUpdate || busy },
-    { endpoint: 'cancel', label: tt('cancel'), disabled: !vm.canCancel || busy },
-  ]
+// 上下文按钮:running 只给 Cancel;空闲给 Check(+可更新时 Update now)。
+// 渲染出来的按钮永远可点,唯一的状态效果是 busyEndpoint 命中者换文案
+// (acceptance #3:可见即可用,禁用态不再假装按钮死了)。
+function renderButtons(hh, tt, vm, busyEndpoint, onAction) {
+  const defs = vm.running
+    ? [{ endpoint: 'cancel', label: tt('cancel') }]
+    : [
+        { endpoint: 'get-status', label: busyEndpoint === 'get-status' ? tt('checking') : tt('check') },
+        ...(vm.canUpdate ? [{ endpoint: 'start-update', label: busyEndpoint === 'start-update' ? tt('starting') : tt('update') }] : []),
+      ]
   return hh('div', { display: 'flex', gap: 8 }, ...defs.map(d => hh('button', {
-    padding: '4px 14px', borderRadius: 6, cursor: d.disabled ? 'default' : 'pointer',
+    padding: '4px 14px', borderRadius: 6, cursor: 'pointer',
     border: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-layer-2)',
     color: 'var(--dsw-alias-label-primary)',
-  }, { key: d.endpoint, disabled: d.disabled, onClick: () => onAction(d.endpoint) }, d.label)))
+  }, { key: d.endpoint, onClick: () => onAction(d.endpoint) }, d.label)))
 }
 
 function renderSteps(hh, vm) {
@@ -220,20 +237,28 @@ function mount(ctx, react) {
         poller.start()
         return () => poller.stop()
       }, [])
-      const [busy, setBusy] = useState(false)
+      // busyEndpoint(而非布尔):只有被点的那颗按钮换文案,其他按钮是独立
+      // 动作、保持正常可点。
+      const [busyEndpoint, setBusyEndpoint] = useState(null)
       const [note, setNote] = useState(null)
       const vm = toViewModel(state.snapshot)
       const onAction = async (endpoint) => {
-        setBusy(true)
+        setBusyEndpoint(endpoint)
+        // 即时反馈先于 await:点击立刻有文字变化;cancel 不预写 note——
+        // running 视图消失本身就是反馈。
+        if (endpoint === 'get-status') setNote(tt('checking'))
+        if (endpoint === 'start-update') setNote(tt('starting'))
         try {
           const v = await call(endpoint)
-          if (endpoint === 'get-status') setNote(tt('uptodate'))   // 快照 value 上没有 reason/note,成功也要给可见反馈
-          else setNote(v?.reason ?? v?.note ?? null)               // refusal/note 是 value 不是 error
+          if (endpoint === 'get-status') setNote(tt('uptodate'))       // 快照 value 上没有 reason/note,成功也要给可见反馈
+          else if (endpoint === 'start-update') setNote(v?.reason ?? v?.note ?? tt('starting'))   // refusal 显示 reason;真启动则维持「启动中」,running 视图随 refresh 接管
+          else setNote(v?.reason ?? v?.note ?? null)                   // cancel:refusal/note 是 value 不是 error
         } catch (e) {
           setNote(String(e?.message ?? e))
+        } finally {
+          setBusyEndpoint(null)
+          refresh()
         }
-        setBusy(false)
-        refresh()
       }
       const line = state.error ?? note
       return hh('div', { display: 'grid', gap: 10, padding: '12px 0' },
@@ -245,7 +270,7 @@ function mount(ctx, react) {
           hh('span', { fontSize: 13, fontWeight: 600, color: 'var(--dsw-alias-label-primary)' }, tt('title')),
           hh('span', { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)' }, vm.running ? tt('running') : tt('idle'))),
         renderPills(hh, vm),
-        renderButtons(hh, tt, vm, busy, onAction),
+        renderButtons(hh, tt, vm, busyEndpoint, onAction),
         renderSteps(hh, vm),
         // 上次更新结果(failed/cancelled)常驻展示,别只活在一次性 note 里
         vm.lastReason && vm.lastReason !== 'ok' && hh('div', {
@@ -273,7 +298,7 @@ function mount(ctx, react) {
 
     ctx.slots.inject('settings.section', () => ctx.slots.register({
       name: 'settings.section', id: 'dsh-updater', order: 100,
-      label: () => t('title'), locale: NS,
+      label: () => t('nav'), locale: NS,
     }, Section))
   } catch (reason) {
     console.info('[dsh-updater] client half disabled:', reason)

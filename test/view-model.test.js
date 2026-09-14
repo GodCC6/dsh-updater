@@ -20,10 +20,35 @@ test('behind harness pill and enabled actions', () => {
   const s = base()
   s.checks = [{ kind: 'harness-git', target: '/h', status: 'behind', behindCount: 7 }]
   const vm = toViewModel(s)
+  assert.equal(vm.pills[0].name, 'harness')
+  assert.equal(vm.pills[0].title, undefined)
   assert.equal(vm.pills[0].tone, 'behind')
   assert.match(vm.pills[0].detail, /behind 7/)
   assert.equal(vm.canUpdate, true)
   assert.equal(vm.canCancel, false)
+})
+
+test('integration pill name is last two path segments, tooltip carries full path', () => {
+  const s = base()
+  s.checks = [
+    { kind: 'integration', target: '/Users/x/.dsh/integrations/superpowers/repo', status: 'up-to-date' },
+    { kind: 'integration', target: '/i', status: 'diverged' },
+  ]
+  const vm = toViewModel(s)
+  // pill 对象诞生于 vm realm,deepStrictEqual 对普通对象按原型比较会误报
+  // (helper 顶注同款陷阱;数组不受影响);展开拷回 host realm 再整体比对。
+  assert.deepEqual({ ...vm.pills[0] }, {
+    name: 'superpowers/repo',
+    title: '/Users/x/.dsh/integrations/superpowers/repo',
+    detail: 'up-to-date',
+    tone: 'ok',
+  })
+  assert.deepEqual({ ...vm.pills[1] }, {
+    name: '/i',
+    title: '/i',
+    detail: 'diverged',
+    tone: 'diverged',
+  })
 })
 
 test('diverged integration renders diverged tone, update still allowed for others', () => {
