@@ -10,11 +10,12 @@ import { runUpdatePipeline } from './lib/update-run.js'
 import { createIdleTracker } from './lib/idle.js'
 import { createAutoApplier } from './lib/auto-apply.js'
 import { createClientRpc } from './lib/client-rpc.js'
+import { RPC_ENDPOINTS, rpcRoute } from './lib/rpc-routes.js'
 
 export const name = 'dsh-updater'
-// 工具注册要等 tools;jobs.start / jobs.list 要等 jobs;session/event 要等 sessions;
-// client 页 RPC 桥要等 connection(存在性守卫,见 apply 内注册块)
-export const inject = ['tools', 'jobs', 'sessions', 'connection']
+// 工具注册要等 tools;jobs.start / jobs.list 要等 jobs;session/event 要等 sessions。
+// connection/webServer 刻意不在这里:它们只服务 client 页,见 apply 内的子 fiber。
+export const inject = ['tools', 'jobs', 'sessions']
 
 const DEFAULTS = {
   checkOnStart: true,
@@ -126,29 +127,25 @@ export function apply(ctx, config) {
   timer.unref?.()
   ctx.effect(() => () => clearInterval(timer))
 
-  // ---- client 页 RPC 桥('/dsh-updater'):与 agent 工具同源同门禁 ----
-  // spike Q4:handle(channel, handler) 恰两参,无 {authority} 选项;信任栅 +
-  // cookie 认证由 connection 层对 handle() 通道统一生效。handler 必须返回
-  // {ok,value}|{ok:false,error} 信封——dispatch 是 async,捕获须配 await,
-  // 否则 rejection 会穿透到 connection 层变成 HTTP 500(Task 3 review finding)。
+  // ---- client 页 RPC 桥:/api 共享通道上的精确 Fetch 路由 ----
+  // 信任栅 + cookie 认证由 connection 对整个 /api 前缀统一生效(connection
+  // index.ts:128 的 requestRejection),所以这三条路由与 agent 工具同门禁。
+  // 为什么不用 connection.rpc.handle('/dsh-updater', …):见 lib/rpc-routes.js 顶注。
   const clientRpc = createClientRpc({
     collect: collectWithUpdate,
     startUpdate: (plan) => startUpdate(plan),
     getSnapshot: () => updateState.snapshot(),
     abort: (reason) => updateState.abort(reason),
   })
-  if (ctx.connection?.rpc?.handle) {
-    const offRpc = ctx.connection.rpc.handle('/dsh-updater', async (endpoint, _payload, _signal) => {
-      try {
-        return await clientRpc.dispatch(endpoint)
-      } catch (e) {
-        return { ok: false, error: { code: 'internal', message: String(e?.message ?? e) } }
-      }
-    })
-    if (typeof offRpc === 'function') ctx.effect(() => offRpc)
-  } else {
-    ctx.logger?.info?.('dsh-updater: connection service absent — client rpc not registered')
-  }
+  // connection 刻意不在顶层 inject 里:vendored cordis 没有 optional inject
+  // (Inject = (keyof M)[] | {…},全部 required),放顶层会让没有 connection 的
+  // profile(如 headless)下整个插件——连 3 个 agent 工具一起——静默不加载。
+  // 子 fiber 才能表达「有 web 面板就挂页,没有也照常给工具」。
+  ctx.inject(['connection'], (webCtx) => {
+    for (const endpoint of RPC_ENDPOINTS) {
+      webCtx.connection.fetch.register(rpcRoute(endpoint, (ep) => clientRpc.dispatch(ep)))
+    }
+  })
 
   // ---- 工具注册 ----
   ctx.tools.register(createStatusTool({ collectStatus: collectWithUpdate }))

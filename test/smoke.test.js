@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { name, apply } from '../index.js'
+import { name, apply, inject } from '../index.js'
+import { gatedCtx } from './helpers/gated-ctx.js'
 
 test('plugin exports name and apply', () => {
   assert.equal(name, 'dsh-updater')
@@ -8,7 +9,7 @@ test('plugin exports name and apply', () => {
 })
 
 test('apply logs and does not throw', () => {
-  const logs = []
-  apply({ logger: { info: (m) => logs.push(m) }, effect: (fn) => fn(), tools: { register: () => () => {} } }, { checkOnStart: true })
+  const { ctx, logs } = gatedCtx(inject)
+  apply(ctx, { checkOnStart: true })
   assert.match(logs[0], /dsh-updater loaded/)
 })
